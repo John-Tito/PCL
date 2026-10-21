@@ -1,0 +1,124 @@
+name: Restore MC Download (patch build + release)
+
+# 本仓库源码保持与上游一致，功能改动以补丁形式保存在 build-patches/。
+# 流程：检出本仓库 → 应用补丁 → 校验 → 构建 → 上传产物 →（可选）发布 Release。
+# 上游同步由 sync-upstream.yml 负责，同步后会主动触发本工作流。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'build-patches/**'
+      - '.github/workflows/restore-mc-download.yml'
+      - 'Plain Craft Launcher 2/**'
+  pull_request:
+    paths:
+      - 'build-patches/**'
+      - '.github/workflows/restore-mc-download.yml'
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: '构建配置'
+        type: choice
+        options: [Release, Debug]
+        default: Release
+      publish_release:
+        description: '发布到 Release'
+        type: choice
+        options: [yes, no]
+        default: yes
+
+permissions:
+  contents: write
+
+concurrency:
+  group: restore-mc-download-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Apply patches and build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Apply patches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $patches = @(Get-ChildItem 'build-patches' -Filter '*.patch' | Sort-Object Name)
+          if ($patches.Count -eq 0) { throw 'build-patches/ 下未找到任何 .patch' }
+          foreach ($p in $patches) {
+            Write-Host "==> $($p.Name)"
+            git apply --check --verbose $p.FullName
+            git apply --verbose $p.FullName
+          }
+          # 补丁生效校验：限制开关应已从源码中消失
+          $left = @(Select-String -Path 'Plain Craft Launcher 2\Modules\ModSecret.vb' -Pattern 'RestrictMcDownload' -SimpleMatch)
+          if ($left.Count -gt 0) { throw '补丁应用后 ModSecret.vb 仍存在 RestrictMcDownload' }
+          git --no-pager diff --stat
+
+      - name: Setup MSBuild.exe
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
+
+      - name: Replace
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          (gc "Plain Craft Launcher 2\Modules\ModSecret.vb") -replace 'Public OAuthClientId As String = If(Environment.GetEnvironmentVariable("PCL_MS_CLIENT_ID"), "")', 'Public OAuthClientId As String = If(Environment.GetEnvironmentVariable("PCL_MS_CLIENT_ID"), "${{ secrets.CLIENT_ID }}")' | Out-File "Plain Craft Launcher 2\Modules\ModSecret.vb"
+          (gc "Plain Craft Launcher 2\Modules\ModSecret.vb") -replace 'Public CurseForgeAPIKey As String = If(Environment.GetEnvironmentVariable("PCL_CURSEFORGE_API_KEY"), "")', 'Public CurseForgeAPIKey As String = If(Environment.GetEnvironmentVariable("PCL_CURSEFORGE_API_KEY"), "${{ secrets.CURSEFORGE_API_KEY }}")' | Out-File "Plain Craft Launcher 2\Modules\ModSecret.vb"
+          (gc "Plain Craft Launcher 2\Modules\Base\ModBase.vb") -replace 'Public Const CommitHash As String = ""', 'Public Const CommitHash As String = "${{ github.sha }}"' | Out-File "Plain Craft Launcher 2\Modules\Base\ModBase.vb"
+
+      - name: Restore NuGet Packages
+        run: dotnet restore PCLCS\PCLCS.csproj
+
+      - name: Build
+        run: msbuild "Plain Craft Launcher 2\Plain Craft Launcher 2.vbproj" -p:Configuration=${{ github.event.inputs.configuration || 'Release' }}
+
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: PCL2-MC-Download-${{ github.event.inputs.configuration || 'Release' }}-${{ github.sha }}
+          path: Plain Craft Launcher 2\obj\${{ github.event.inputs.configuration || 'Release' }}\Plain Craft Launcher 2.exe
+          if-no-files-found: error
+
+      # 发布 Release：push 到 main 时自动发布；手动触发时由 publish_release 决定
+      - name: Publish Release
+        if: >-
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'yes')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIG: ${{ github.event.inputs.configuration || 'Release' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cfg = $env:CONFIG
+          if ($cfg -ne 'Release') { Write-Host "仅发布 Release 构建，当前为 $cfg，跳过发布"; exit 0 }
+          $exe = "Plain Craft Launcher 2\obj\$cfg\Plain Craft Launcher 2.exe"
+          if (-not (Test-Path $exe)) { throw "未找到构建产物：$exe" }
+
+          $ver = (Select-String -Path 'Plain Craft Launcher 2\Modules\Base\ModBase.vb' -Pattern 'VersionBaseName As String = "([0-9.]+)"').Matches[0].Groups[1].Value
+          $run = $env:GITHUB_RUN_NUMBER
+          $tag = "v$ver-mcdl.$run"
+          $title = "PCL $ver · 恢复 MC 下载构建 #$run"
+
+          $notes = (@(
+              '基于上游 commit `' + $env:GITHUB_SHA + '` 构建的补丁版 PCL（非官方构建）。',
+              '',
+              '已应用补丁：'
+            ) + (Get-ChildItem 'build-patches' -Filter '*.patch' | ForEach-Object { '- `' + $_.Name + '`' }) + @(
+              '',
+              '安装后建议在 PCL 设置中关闭自动更新，避免被官方版本覆盖。'
+            )) -join "`n"
+
+          # 同一 run_number 重跑时先清理旧 tag / release，避免冲突
+          gh release delete $tag --yes --cleanup-tag 2>$null | Out-Null
+          gh release create $tag $exe 'build-patches\restore-mc-download.patch' --title $title --notes $notes --target "$env:GITHUB_SHA" --prerelease
