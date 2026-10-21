@@ -1,0 +1,2 @@
+# 构建补丁按字节保真，避免 autocrlf 改写补丁内容
+*.patch -text

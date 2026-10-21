@@ -1,0 +1,80 @@
+name: Sync upstream
+
+# 定时把上游 Meloong-Git/PCL 的 main 合进来，并把本仓库自己的提交（补丁、CI）
+# rebase 到最新上游之上，保持历史线性；同步成功后主动触发补丁构建与发布。
+#
+# 注意：
+# - 上游改动若与 build-patches/ 中的补丁冲突，本工作流会失败并提示重新生成补丁，
+#   不会产出内容错误的构建。
+# - 若 main 开启了分支保护禁止 force push，需要改为合并方式或由管理员放行。
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Rebase onto upstream
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rebase onto upstream main
+        id: rebase
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git remote add upstream https://github.com/Meloong-Git/PCL.git || true
+          git fetch --no-tags upstream main
+          upstream_sha=$(git rev-parse FETCH_HEAD)
+          echo "upstream=$upstream_sha"
+
+          if git merge-base --is-ancestor "$upstream_sha" HEAD; then
+            echo "上游已是最新，无需同步"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "上游有新提交，rebase 本地提交："
+          git --no-pager log --oneline -20 "HEAD..$upstream_sha"
+
+          if ! git rebase "$upstream_sha"; then
+            git rebase --abort || true
+            echo "::error::上游改动与本地补丁冲突，请本地执行 git rebase upstream/main 解决后重新生成 build-patches/ 下的补丁"
+            exit 1
+          fi
+
+          echo "rebase 完成："
+          git --no-pager log --oneline -5
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push rebased main
+        if: steps.rebase.outputs.changed == 'true'
+        run: git push --force-with-lease origin HEAD:main
+
+      # 用 GITHUB_TOKEN 推送不会触发其它工作流，因此显式派发一次构建
+      - name: Trigger patch build and release
+        if: steps.rebase.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run restore-mc-download.yml \
+            --ref main \
+            -f configuration=Release \
+            -f publish_release=yes

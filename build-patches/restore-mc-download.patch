@@ -1,0 +1,132 @@
+diff --git a/Plain Craft Launcher 2/FormMain.xaml.vb b/Plain Craft Launcher 2/FormMain.xaml.vb
+index d35da3a..902abdb 100644
+--- a/Plain Craft Launcher 2/FormMain.xaml.vb	
++++ b/Plain Craft Launcher 2/FormMain.xaml.vb	
+@@ -11,11 +11,8 @@ Public Class FormMain
+         Dim FeatureList As New List(Of KeyValuePair(Of Integer, String))
+         '统计更新日志条目
+         If BuildType = BuildTypes.Release Then
+-            If LastVersion < 413 Then 'Release 2.99.0.0
+-                FeatureList.Add(New KeyValuePair(Of Integer, String)(5, "删除：为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……"))
+-            End If
+             If LastVersion < 411 Then 'Release 2.14.0.0
+-                FeatureList.Add(New KeyValuePair(Of Integer, String)(4, "新增：允许修改、添加、移除、更新已安装版本的各个组件，可从版本设置中进入"))
++                FeatureList.Add(New KeyValuePair(Of Integer, String)(5, "新增：允许修改、添加、移除、更新已安装版本的 MC 版本以及各个组件，可从版本设置中进入"))
+                 FeatureList.Add(New KeyValuePair(Of Integer, String)(2, "优化：启动游戏时允许按 Esc 取消"))
+                 FeatureList.Add(New KeyValuePair(Of Integer, String)(2, "优化：允许复制主页的启动日志中的内容"))
+                 FeatureCount += 19
+@@ -103,11 +100,8 @@ Public Class FormMain
+             '3：BUG+ IMP* FEAT-
+             '2：BUG* IMP-
+             '1：BUG-
+-            If LastVersion < 414 Then 'Snapshot 2.99.0.0
+-                FeatureList.Add(New KeyValuePair(Of Integer, String)(5, "删除：为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……"))
+-            End If
+             If LastVersion < 412 Then 'Snapshot 2.14.0.0
+-                FeatureList.Add(New KeyValuePair(Of Integer, String)(4, "新增：允许修改、添加、移除、更新已安装版本的各个组件，可从版本设置中进入"))
++                FeatureList.Add(New KeyValuePair(Of Integer, String)(5, "新增：允许修改、添加、移除、更新已安装版本的 MC 版本以及各个组件，可从版本设置中进入"))
+                 FeatureList.Add(New KeyValuePair(Of Integer, String)(2, "优化：启动游戏时允许按 Esc 取消"))
+                 FeatureList.Add(New KeyValuePair(Of Integer, String)(2, "优化：允许复制主页的启动日志中的内容"))
+                 FeatureCount += 19
+@@ -1076,10 +1070,6 @@ Public Class FormMain
+                     RunInUi(Sub() FrmMain.PageChange(FormMain.PageType.TaskManager))
+                     Return
+                 Catch ex As Exception
+-                    If RestrictMcDownload AndAlso ex.Message = "为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……" Then
+-                        Hint(ex.Message, HintType.Red)
+-                        Return
+-                    End If
+                     If ex.IsCanceled Then Return
+                     '安装失败，继续往后尝试
+                 End Try
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.vb b/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.vb
+index 681fce1..eb55c72 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.vb	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.vb	
+@@ -8,10 +8,6 @@ Public Module ModModpack
+     ''' 弹窗要求选择一个整合包文件并进行安装。
+     ''' </summary>
+     Public Sub ModpackInstall()
+-        If RestrictMcDownload Then
+-            Hint("为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……", HintType.Red)
+-            Return
+-        End If
+         Dim File As String = Dialogs.SelectFile("选择整合包压缩文件", False, filter:={({"rar", "zip", "mrpack"}, "整合包文件")}).FirstOrDefault() '选择整合包文件
+         If String.IsNullOrEmpty(File) Then Return
+         RunInThread(
+@@ -85,7 +81,6 @@ Public Module ModModpack
+                 End If
+             End Try
+             '执行对应的安装方法
+-            If RestrictMcDownload Then Throw New Exception("为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……")
+             Select Case PackType
+                 Case 0
+                     Logger.Info("整合包种类：CurseForge")
+diff --git a/Plain Craft Launcher 2/Modules/ModSecret.vb b/Plain Craft Launcher 2/Modules/ModSecret.vb
+index a8032f2..598102a 100644
+--- a/Plain Craft Launcher 2/Modules/ModSecret.vb	
++++ b/Plain Craft Launcher 2/Modules/ModSecret.vb	
+@@ -15,7 +15,6 @@ Friend Module ModSecret
+ 
+ #Region "网络鉴权"
+ 
+-    Public Const RestrictMcDownload As Boolean = True
+     Friend Function SecretCdnSign(UrlWithMark As String) As String
+         If Not UrlWithMark.EndsWithF("{CDN}") Then Return UrlWithMark
+         Return UrlWithMark.Replace("{CDN}", "").Replace(" ", "%20")
+diff --git a/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadInstall.xaml.vb b/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadInstall.xaml.vb
+index a59aa66..2ce085e 100644
+--- a/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadInstall.xaml.vb	
++++ b/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadInstall.xaml.vb	
+@@ -14,11 +14,7 @@ Public Class PageDownloadInstall
+ 
+     Public Overridable Sub LoaderInit() Handles Me.Initialized
+         ControlInit()
+-        If RestrictMcDownload Then
+-            PageLoaderInit(LoadMinecraft, PanLoad, PanAllBack, Nothing, New LoaderTask(Of String, DlClientListResult)("关闭下载", Sub() Throw New Exception("为遵守相关法律法规，PCL 暂时不再提供 MC 下载功能，非常抱歉 qwq……")), AddressOf LoadMinecraft_OnFinish)
+-        Else
+-            PageLoaderInit(LoadMinecraft, PanLoad, PanAllBack, Nothing, DlClientListLoader, AddressOf LoadMinecraft_OnFinish)
+-        End If
++        PageLoaderInit(LoadMinecraft, PanLoad, PanAllBack, Nothing, DlClientListLoader, AddressOf LoadMinecraft_OnFinish)
+     End Sub
+ 
+     Private IsLoad As Boolean = False
+diff --git a/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadModify.vb b/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadModify.vb
+index f873fd9..ae44e04 100644
+--- a/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadModify.vb	
++++ b/Plain Craft Launcher 2/Pages/PageDownload/PageDownloadModify.vb	
+@@ -312,7 +312,7 @@ Public Class PageDownloadModify
+         TextSelectName.ValidateRules = New ObjectModel.Collection(Of Validate) From {
+             New ValidateFolderName(McFolderSelected & "versions", IgnoreList:=New List(Of String) From {OriginalName})}
+         '修改页 UI
+-        CardMinecraft.Visibility = If(RestrictMcDownload, Visibility.Collapsed, Visibility.Visible)
++        CardMinecraft.Visibility = Visibility.Visible
+         BtnBack.Visibility = Visibility.Collapsed
+         ImgLogo.Margin = New Thickness(15, 15, 0, 0)
+         TextSelectName.Margin = New Thickness(56, 16, 16, 0)
+diff --git a/Plain Craft Launcher 2/Pages/PageDownload/Resource/PageDownloadCompDetail.xaml.vb b/Plain Craft Launcher 2/Pages/PageDownload/Resource/PageDownloadCompDetail.xaml.vb
+index 85ef19c..e8ec615 100644
+--- a/Plain Craft Launcher 2/Pages/PageDownload/Resource/PageDownloadCompDetail.xaml.vb	
++++ b/Plain Craft Launcher 2/Pages/PageDownload/Resource/PageDownloadCompDetail.xaml.vb	
+@@ -272,7 +272,7 @@ GroupDone:
+         End If
+         '实例化每个元素
+         For Each Version In Versions
+-            If Not RestrictMcDownload AndAlso TargetResourceType = ResourceTypes.ModPack Then
++            If TargetResourceType = ResourceTypes.ModPack Then
+                 Stack.Children.Add(Version.ToListItem(AddressOf Install_Click, AddressOf Save_Click, IsBadDisplay:=HasDuplicates))
+             Else
+                 Stack.Children.Add(Version.ToListItem(AddressOf Save_Click, IsBadDisplay:=HasDuplicates))
+diff --git a/Plain Craft Launcher 2/Pages/PageSetup/Settings.vb b/Plain Craft Launcher 2/Pages/PageSetup/Settings.vb
+index 269c42c..274d4c5 100644
+--- a/Plain Craft Launcher 2/Pages/PageSetup/Settings.vb	
++++ b/Plain Craft Launcher 2/Pages/PageSetup/Settings.vb	
+@@ -35,7 +35,7 @@ Public Class Settings
+         New Setting("SystemDebugDelay", False, Source:=Sources.Registry),
+         New Setting("SystemDebugSkipCopy", False, Source:=Sources.Registry),
+         New Setting("SystemSystemCache", "", Source:=Sources.Registry),
+-        New Setting("SystemSystemUpdate", 0),
++        New Setting("SystemSystemUpdate", 1),
+         New Setting("SystemSystemActivity", 0),
+         New Setting("SystemSystemTelemetry", True, Source:=Sources.Registry),
+         New Setting("CacheDrops", "", Source:=Sources.Registry),
